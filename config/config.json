@@ -1,0 +1,136 @@
+{
+  "robot_ip": "192.168.255.1",
+  "robot_port": 80,
+  "timeout_seconds": 3,
+  "camera_ip": "192.168.255.3",
+  "settings": {
+    "plane_z_mm": 0,
+    "z_safe": 500,
+    "movl_speed": 350,
+    "rx": 180,
+    "ry": 0,
+    "rz": 90
+  },
+  "workflow": {
+    "end_after_moveunti_start": false,
+    "z_completion": "laser_on_and_stopped",
+    "repeat_until_empty": true,
+    "empty_seconds": 2
+  },
+  "drop": {
+    "position_variable": 10,
+    "safe_z_mm": 600,
+    "first_drop_z_mm": 330,
+    "board_thickness_mm": 12,
+    "job_timeout": 120,
+    "after_h2off_move": {
+      "axis": "z",
+      "distance_mm": 200
+    }
+  },
+  "vision": {
+    "confidence": 0.5,
+    "stable_frames": 5,
+    "stable_seconds": 1,
+    "tolerance_mm": 3,
+    "max_frame_age": 2,
+    "max_frame_gap": 0.5,
+    "imgsz": 960,
+    "device": "0",
+    "sdk_root": null,
+    "preview_max_width": 960
+  },
+  "workspace": {
+    "x": [
+      -2000,
+      2000
+    ],
+    "y": [
+      -2000,
+      2000
+    ],
+    "z": [
+      -500,
+      2500
+    ]
+  },
+  "motion": {
+    "timeout": 120,
+    "target_timeout": 30,
+    "job_timeout": 60,
+    "poll_seconds": 0.1,
+    "xyz_tolerance": 1,
+    "angle_tolerance": 0.5,
+    "settle_samples": 3,
+    "expected_tool": null,
+    "expected_posture": null
+  },
+  "laser": {
+    "verified": false,
+    "start": 20050,
+    "bit": 0,
+    "active_high": true
+  },
+  "job": {
+    "name": "MOVEUNTI",
+    "verified": false,
+    "start_verified": false,
+    "min_z": null,
+    "max_descent_mm": null,
+    "speed_mm_s": null
+  },
+  "vacuum": {
+    "verified": true,
+    "method": "job",
+    "mode": "complementary",
+    "start": null,
+    "bits": [
+      null,
+      null
+    ],
+    "jobs": {
+      "1_on": "H1ON",
+      "1_off": "H1OFF",
+      "2_on": "H2ON",
+      "2_off": "H2OFF"
+    },
+    "job_timeout": 10,
+    "input_contacts": [
+      20051,
+      20052
+    ],
+    "output_contacts": [
+      30050,
+      30051
+    ],
+    "active_high": [
+      true,
+      true
+    ],
+    "owned_byte": false
+  },
+  "commissioning": {
+    "config_sha256": "",
+    "evidence": "",
+    "read_only": false,
+    "xy_only": false,
+    "moveunti_only": false,
+    "vacuum_only": false,
+    "path_verified": false,
+    "orientation_verified": false,
+    "full_cycle": false
+  },
+  "web": {
+    "host": "127.0.0.1",
+    "port": 8011,
+    "allowed_hosts": [
+      "127.0.0.1",
+      "localhost"
+    ],
+    "allowed_clients": [
+      "127.0.0.1",
+      "::1",
+      "testclient"
+    ]
+  }
+}

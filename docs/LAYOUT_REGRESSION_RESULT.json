@@ -1,0 +1,10 @@
+{
+  "tests": 173,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "passed": true,
+  "seconds": 91.672,
+  "hardware": "MockClient/FakeSocket only",
+  "scope": "core/config layout cleanup"
+}

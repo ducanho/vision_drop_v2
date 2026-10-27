@@ -1,0 +1,5 @@
+{
+  "models/best.pt": "f4fa0e39c43bd09842314ffec8331b6ae7acd3357eb3696c42c8df845c93f8b5",
+  "calibration/eye_to_hand.npz": "6773bbfed8c7ab5a75bdbb851b9fbd2d13276b59f65055eab81ec456e1c21a6f",
+  "calibration/camera_intrinsic_2.npz": "c792a9b572e935c2f12bf21f71b4e0c821d6f7af9c40920d16166a8109d1d418"
+}

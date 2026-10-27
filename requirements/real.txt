@@ -1,0 +1,3 @@
+-r base.txt
+ultralytics>=8.3,<9
+# HIKROBOT MVS SDK + vendor Python wrapper must be installed on Windows separately.
