@@ -121,64 +121,11 @@ class PickVariableTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):self.c._start_moveunti()
         self.assertFalse(any(n=='START' for n,d in self.c.robot.client.commands))
 
-    def test_job_moves_xy_before_search_and_only_pc_movl_is_post_drop_lift(self):
-        result=self.run_pick()
-        self.assertEqual(result['state'],'COMPLETE',result['error'])
-        self.assertTrue(result['pick_variable']['verified'])
-        self.assertNotIn('WAIT_PICK_P002',[h['state'] for h in result['history']])
-        commands=self.c.robot.client.commands
-        self.assertEqual([d for n,d in commands if n=='START'],['MOVEUNTI','H2ON','DROP','H2OFF'])
-        self.assertEqual(sum(n=='MOVL' for n,d in commands),1)
-        self.assertLess(commands.index(('START','H2OFF')),next(i for i,(n,d) in enumerate(commands) if n=='MOVL'))
-        self.assertEqual(self.c.stack.snapshot()['stacked_count'],1)
-
-    def test_job_completion_after_missed_p002_observation_is_accepted(self):
-        start=self.c._start_moveunti
-        def skipped():
-            target=start()
-            client=self.c.robot.client
-            client.activity=None;client.running=False;client.pose=[target[a] for a in ('x','y','z','rx','ry','rz')]
-            client.pose[2]-=30;client.laser=True
-            return target
-        with patch.object(self.c,'_start_moveunti',side_effect=skipped):result=self.run_pick()
-        self.assertEqual(result['state'],'COMPLETE',result['error'])
-        self.assertTrue(any(n=='START' and d=='H2ON' for n,d in self.c.robot.client.commands))
-
-    def test_laser_on_at_p002_without_descent_is_not_completion(self):
-        start=self.c._start_moveunti
-        self.c.cfg['motion']['job_timeout']=.04
-        def no_descent():
-            target=start()
-            client=self.c.robot.client
-            client.pose=[target[a] for a in ('x','y','z','rx','ry','rz')]
-            client.activity=None;client.running=False;client.laser=True
-            return target
-        with patch.object(self.c,'_start_moveunti',side_effect=no_descent):result=self.run_pick()
-        self.assertEqual(result['state'],'FAULT')
-        self.assertFalse(any(n=='START' and d=='H2ON' for n,d in self.c.robot.client.commands))
-
-    def test_stopped_laser_on_with_wrong_final_xy_or_orientation_blocks_h2on(self):
-        start=self.c._start_moveunti
-        for axis in (0,5):
-            with self.subTest(axis=axis):
-                self.c.robot.client.commands.clear()
-                self.c.robot.client.laser=self.c.robot.client.holding=False
-                self.c.journal.update(state='IDLE',error='',pending=None)
-                def wrong_pose():
-                    target=start()
-                    client=self.c.robot.client
-                    client.activity=None;client.running=False
-                    client.pose=[target[a] for a in ('x','y','z','rx','ry','rz')]
-                    client.pose[2]-=30;client.pose[axis]+=10;client.laser=True
-                    return target
-                with patch.object(self.c,'_start_moveunti',side_effect=wrong_pose):result=self.run_pick()
-                self.assertEqual(result['state'],'FAULT')
-                self.assertFalse(any(n=='START' and d=='H2ON' for n,d in self.c.robot.client.commands))
 
     def test_ready_target_uses_same_write_path_without_resampling(self):
         c=self.c;v=c.vision
         c.journal.update(automatic_repeat=True,target=dict(id=1))
-        c.robot.client.last_job='DROP'
+        c.robot.client.last_job='PICKDROP'
         with patch.object(c.robot,'read_b090',side_effect=[0,1]):
             c._arm_drop_prefetch();c._poll_drop_prefetch()
         c.cfg['vision'].update(stable_frames=2,stable_seconds=.02)

@@ -62,37 +62,36 @@ def operator_motion_workflow(cfg):
 
 
 def real_gate(cfg, stage='full_cycle'):
+    if stage == 'full_cycle':
+        from .pickdrop import real_blockers
+        issues=real_blockers(cfg)
+        if issues:
+            raise RuntimeError('REAL PICKDROP bị khóa: '+'; '.join(issues))
+        return
     # Operator confirmed the existing MOVL path and requested removal of the
     # static commissioning/expected-tool gates for the handoff workflow.
     # Live readiness, workspace, pose metadata and JOB existence stay checked.
-    if operator_motion_workflow(cfg) and stage in ('full_cycle','xy_only','moveunti_only'):
+    if operator_motion_workflow(cfg) and stage in ('xy_only','moveunti_only'):
         if stage!='xy_only' and cfg['job']['name']!='MOVEUNTI':
             raise RuntimeError('Luồng bàn giao yêu cầu đúng JOB MOVEUNTI')
-        if stage=='full_cycle' and not cfg['workflow'].get('end_after_moveunti_start',False):
-            from robot.vacuum import validate_mapping
-            validate_mapping(cfg['vacuum'])
         return
     c = cfg['commissioning']
     required = ['read_only']
-    if stage in ('xy_only', 'full_cycle'):
+    if stage == 'xy_only':
         required += ['path_verified', 'orientation_verified']
         if cfg['motion']['expected_tool'] is None or cfg['motion']['expected_posture'] is None:
             raise RuntimeError('Chưa xác minh TOOL/posture')
-    if stage == 'full_cycle':
-        required += ['xy_only', 'moveunti_only', 'vacuum_only', 'full_cycle']
     if any(c.get(k) is not True for k in required) or not c['evidence'] or c['config_sha256'] != commissioning_hash(cfg):
         raise RuntimeError('REAL bị khóa: thiếu nghiệm thu hoặc cấu hình đã thay đổi; xem checklist')
-    if stage in ('moveunti_only', 'full_cycle'):
+    if stage == 'moveunti_only':
         j = cfg['job']
         if not (j['verified'] and j['start_verified'] and cfg['laser']['verified']
                 and isinstance(j['min_z'], (float, int)) and isinstance(j['max_descent_mm'], (float, int))
                 and isinstance(j['speed_mm_s'], (float, int)) and j['speed_mm_s'] > 0 and j['max_descent_mm'] > 0):
             raise RuntimeError('MOVEUNTI: thiếu xác minh JOB/laser/hành trình/tốc độ')
-    if stage in ('vacuum_only','full_cycle'):
+    if stage == 'vacuum_only':
         from robot.vacuum import validate_mapping
         validate_mapping(cfg['vacuum'])
-    if stage == 'full_cycle':
-        raise RuntimeError('FULL CYCLE REAL bị khóa: chưa có adapter chứng minh nguyên nhân MOVEUNTI dừng do laser')
 
 
 def reached(current, target, cfg):

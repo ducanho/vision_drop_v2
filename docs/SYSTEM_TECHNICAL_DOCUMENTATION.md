@@ -1,3 +1,5 @@
+> **27/10/2026 - current full_cycle: SINGLE JOB PICKDROP.** See [migration and HOME report](PICKDROP_MIGRATION.md). REAL is enabled using the operator-confirmed BASE P011 contract. MOVEUNTI + DROP descriptions below are historical.
+
 # PICKING_FULL_CYCLE — SYSTEM TECHNICAL DOCUMENTATION
 
 > Đã dọn snapshot, báo cáo cũ, ảnh chụp và các bản text tham chiếu dư thừa. Các đoạn mô tả artifact đó bên dưới là ghi chép audit lịch sử, không phải phụ thuộc runtime. Hiện chỉ giữ tài liệu này, B090_PREFETCH.md, HW0483202.pdf, asset_hashes.json và LAYOUT_REGRESSION_RESULT.json. Đầu ra kiểm thử mới nằm trong logs/reports/.

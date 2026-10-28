@@ -54,6 +54,8 @@ class IndependenceTests(unittest.TestCase):
             code='''
 import sys,os,time
 from pathlib import Path
+from unittest.mock import patch
+patch('socket.create_connection',side_effect=AssertionError('Offline subprocess: network disabled')).start()
 original=Path(os.environ['NX100_ORIGINAL']).resolve()
 def guard(event,args):
  if event=='open' and isinstance(args[0],(str,bytes,os.PathLike)):

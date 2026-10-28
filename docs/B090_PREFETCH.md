@@ -1,3 +1,5 @@
+> **27/10/2026 - current full_cycle: SINGLE JOB PICKDROP.** See [migration and HOME report](PICKDROP_MIGRATION.md). REAL is enabled using the operator-confirmed BASE P011 contract. MOVEUNTI + DROP descriptions below are historical.
+
 # B090 prefetch — 26/10/2026
 
 Điều chỉnh theo yêu cầu tiếp theo của người vận hành: target đã READY sau B090

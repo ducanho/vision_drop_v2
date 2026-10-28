@@ -49,3 +49,47 @@ button.resetButton{background:#1769aa;border-color:#2587d1;color:#fff}
 :fullscreen .fullscreenRelaxed .fullscreenLive>main{flex:none;grid-template-rows:auto}
 :fullscreen .fullscreenRelaxed .preview{flex:none;aspect-ratio:16/9}
 @media(max-width:1000px){:fullscreen .fullscreenLive>main,:fullscreen .fullscreenSettings{padding-left:16px;padding-right:16px}}
+
+.robotControls #home{background:#146b70;border-color:#238c91;color:#e5ffff}
+
+/* Six equal status cells; all aggregation stays in the display layer. */
+.statusBar .flags{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.statusBar .flag{height:60px;min-height:60px;padding:8px 12px;gap:4px;justify-content:center}
+.statusBar .flag>span{font-size:11px;line-height:14px;margin:0}
+.statusBar .flag b{font-size:14px;line-height:18px;max-width:100%;white-space:normal;overflow-wrap:anywhere}
+.statusBar .modeKnown{color:var(--text)}
+.statusBar .statusFault{color:var(--red)}
+.statusBar .statusHold{color:#ffce78}
+.statusBar .vacuumSensors{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;width:100%;max-width:180px;min-height:18px;align-items:center}
+.statusBar .vacuumSensor{display:inline-flex;align-items:center;gap:7px;min-width:0;margin:0}
+.statusBar .vacuumSensor span{margin:0;font-size:14px;line-height:18px;font-weight:600;color:var(--text)}
+.statusBar .vacuumDot{display:block;flex:0 0 10px;width:10px;height:10px;border:1.5px solid transparent;border-radius:50%}
+.statusBar .vacuumDot.on{background:var(--green);border-color:var(--green)}
+.statusBar .vacuumDot.off{background:var(--muted);border-color:var(--muted)}
+.statusBar .vacuumDot.unknown{background:transparent;border-color:var(--text)}
+@media(max-width:600px){.statusBar .flags{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:380px){.statusBar .flag{height:72px;min-height:72px}.statusBar .flag b{font-size:13px}}
+
+/* Larger operating targets; preserve the existing button colors and handlers. */
+.robotControls .buttons{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.robotControls .buttons>button{min-width:0;min-height:64px;padding:16px 18px;font-size:15px;font-weight:600}
+.robotControls #servoOn{grid-column:1/-1}
+
+/* A body-level fixed control stays outside the relocated fullscreen pages. */
+#fullscreen{top:auto;right:calc(16px + env(safe-area-inset-right,0px));bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:1100;width:44px;height:44px;min-width:44px;min-height:44px;padding:4px;background:transparent;border-radius:6px;isolation:isolate}
+#fullscreen::before{content:'';position:absolute;inset:2px;z-index:-1;background:#0D0D0Dcc;border-radius:6px}
+#fullscreen:hover{background:transparent}
+#fullscreen:hover::before{background:#181818}
+#fullscreen svg{width:26px;height:26px}
+.notificationBar{right:calc(76px + env(safe-area-inset-right,0px))}
+body{padding-bottom:max(calc(var(--notification-height,80px) + 36px + env(safe-area-inset-bottom,0px)),76px)}
+:fullscreen .fullscreenSettings{padding-bottom:max(calc(24px + var(--notification-height,0px)),76px)}
+
+/* In-page confirmation avoids the native confirm() fullscreen exit policy. */
+#releaseHoldDialog{width:min(440px,calc(100vw - 32px));max-height:calc(100dvh - 32px);overflow:auto;padding:24px;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--text);box-shadow:0 16px 60px #0009}
+#releaseHoldDialog::backdrop{background:#0009}
+#releaseHoldDialog h2{font-size:16px;margin:0}
+#releaseHoldDialog p{margin:16px 0 20px;line-height:1.6}
+.releaseConfirmActions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.releaseConfirmActions button{min-width:0;min-height:48px;padding:12px;font-size:14px}
+@media(max-width:600px),(max-height:650px){.robotControls .buttons>button{min-height:60px;padding:14px 12px;font-size:14px}}

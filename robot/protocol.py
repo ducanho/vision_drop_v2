@@ -95,16 +95,19 @@ def encode_command(name, data="", allowed_start_jobs=()):
             _number(item)
         data = ",".join(fields)
     elif name == 'SAVEV':
-        if fields not in (['4','2'],['4','9'],['4','10'],['0','90']):
-            raise ValueError('Only reading P002/P009/P010 and B090 is enabled')
+        if fields not in (['4','2'],['4','9'],['4','10'],['4','11'],['0','90'],['0','91'],['1','0']):
+            raise ValueError('Only reading P002/P009/P010/P011, B090/B091 and I000 is enabled')
         data = ','.join(fields)
     elif name == 'LOADV':
-        if len(fields)!=12 or fields[:4] not in (['4','2','1','0'],['4','10','1','0']):
-            raise ValueError('Only Cartesian BASE positions P002/P010 can be written')
-        for value in fields[4:10]:
-            _number(value)
-        _integer(fields[10],0,63)
-        _integer(fields[11],0,23)
+        if len(fields)==3 and fields[:2]==['1','0']:
+            _integer(fields[2],0,5000)  # HW0483202 LOADV format 1: Integer I000.
+        else:
+            if len(fields)!=12 or fields[:4] not in (['4','2','1','0'],['4','10','1','0']):
+                raise ValueError('Only BASE P002/P010 and speed Integer I000 can be written')
+            for value in fields[4:10]:
+                _number(value)
+            _integer(fields[10],0,63)
+            _integer(fields[11],0,23)
         data = ','.join(fields)
     elif name in {"IOREAD", "IOWRITE"}:
         if len(fields) < 2:

@@ -16,7 +16,7 @@ class Controller:
         self.connected = False
         self.connection_generation = 0
         allowed_jobs=tuple(config['vacuum'].get('jobs',{}).values()) if config['vacuum'].get('method')=='job' else ()
-        allowed_jobs+=('DROP',)
+        allowed_jobs+=('DROP','PICKDROP','HOME')
         self.client = MockClient(allowed_jobs) if mock else Client(config['robot_ip'], config['robot_port'], config['timeout_seconds'],allowed_start_jobs=allowed_jobs)
         self.vacuum = [None, None]
         self.laser_raw_byte = None
@@ -51,10 +51,16 @@ class Controller:
 
     def read_b090(self):
         """Uncached read, serialized with every controller transaction."""
+        return self._read_byte(90)
+
+    def read_b091(self):
+        return self._read_byte(91)
+
+    def _read_byte(self, index):
         with self.lock:
-            raw = self.client.execute('SAVEV', '0,90').strip()
+            raw = self.client.execute('SAVEV', f'0,{index}').strip()
             if not re.fullmatch(r'[0-9]{1,3}', raw) or not 0 <= int(raw) <= 255:
-                raise RuntimeError('SAVEV B090 malformed/out of range: ' + raw)
+                raise RuntimeError(f'SAVEV B{index:03d} malformed/out of range: ' + raw)
             return int(raw)
 
     def laser(self):
@@ -65,6 +71,20 @@ class Controller:
             except Exception:
                 self.laser_raw_byte = None
                 raise
+
+    def read_i000(self):
+        """HW0483202 SAVEV format 1: type 1, variable 0; signed Integer reply."""
+        with self.lock:
+            raw=self.client.execute('SAVEV','1,0').strip()
+            if not re.fullmatch(r'[+-]?\d{1,5}',raw) or not -32768<=int(raw)<=32767:
+                raise RuntimeError('SAVEV I000 malformed/out of Integer range: '+raw)
+            return int(raw)
+
+    def write_i000(self,value):
+        if type(value) is not int or not 0<=value<=5000:
+            raise ValueError('SPEED I000 cần số nguyên từ 0 đến 5000')
+        with self.lock:
+            self.client.execute('LOADV',f'1,0,{value}')
 
     def move(self, target, speed, reference):
         with self.lock:
@@ -144,7 +164,14 @@ class Controller:
             self.connected = True
             input_contacts=self.config['vacuum'].get('input_contacts',[])
             vacuum_inputs=vacuum.monitor_inputs(self.laser_raw_byte,self.laser_config['start'],input_contacts)
+            speed_i000,speed_error=None,''
+            try:
+                speed_i000=self.read_i000()
+            except Exception as exc:
+                # Speed display failure must not change existing motion telemetry guards.
+                speed_error=str(exc)
             return dict(flags=flags, position=pose, laser=laser, laser_raw_byte=self.laser_raw_byte,
+                        speed_i000=speed_i000,speed_error=speed_error,
                         laser_mapping_verified=self.laser_config['verified'], read_errors=errors,
                         vacuum_inputs=vacuum_inputs,vacuum_input_contacts=input_contacts,
                         vacuum_output_contacts=self.vacuum_config.get('output_contacts',[]),vacuum_raw_byte=self.vacuum_raw_byte,

@@ -31,7 +31,7 @@ def verify_p002(expected,raw):
     for index,(a,b) in enumerate(zip(actual,expected)):
         tolerance=Decimal('.001') if 2<=index<8 else Decimal('0')
         if abs(Decimal(a)-Decimal(b))>tolerance:
-            raise ProtocolError('Đọc lại P002 không khớp; không START MOVEUNTI')
+            raise ProtocolError('Đọc lại P002 không khớp; không START JOB')
 
 
 def with_z(fields,z):

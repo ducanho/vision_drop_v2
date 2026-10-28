@@ -132,5 +132,10 @@
       "::1",
       "testclient"
     ]
+  },
+  "pickdrop": {
+    "operator_confirmed": true,
+    "job_sha256": "219ddb8ceb65a2d86644792124d5c595e52b8ed52dd2479d72f6545274067bfd",
+    "p011_frame": "BASE"
   }
 }

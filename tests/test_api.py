@@ -33,6 +33,44 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.client.get('/api/preview.jpg').status_code,503)
         self.assertEqual(self.client.get('/api/laser/status').json()['laser_in1'],'UNKNOWN')
 
+    def test_existing_start_route_executes_single_pickdrop_without_ui_change(self):
+        self.claim()
+        c=self.app.state.cycle
+        c.cfg['workflow']['repeat_until_empty']=False
+        c.cfg['vision'].update(stable_frames=2,stable_seconds=.04)
+        c.cfg['motion'].update(poll_seconds=.01,settle_samples=2)
+        self.assertEqual(self.post('/api/system/connect').status_code,200)
+        deadline=time.monotonic()+2
+        while not c.vision.status()['connected'] and time.monotonic()<deadline:
+            time.sleep(.01)
+        self.assertTrue(c.vision.status()['connected'])
+        response=self.post('/api/cycle/start')
+        self.assertEqual(response.status_code,200,response.text)
+        c.thread.join(timeout=4)
+        self.assertFalse(c.busy)
+        state=self.client.get('/api/state').json()
+        self.assertEqual(state['state'],'COMPLETE',state['error'])
+        self.assertEqual(state['drop_height']['stacked_count'],1)
+        self.assertEqual([d for n,d in c.robot.client.commands if n=='START'],['PICKDROP'])
+
+    def test_home_requires_control_lease_and_never_duplicates_a_request(self):
+        self.assertEqual(self.post('/api/robot/home').status_code,423)
+        self.claim()
+        c=self.app.state.cycle
+        c.robot.connect()
+        c.refresh()
+        self.assertTrue(self.client.get('/api/state').json()['capabilities']['home']['allowed'])
+        s=self.client.get('/api/state').json()
+        body=dict(revision=s['revision'],request_id='home-api-request-001')
+        response=self.client.post('/api/robot/home',json=body)
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(response.json()['job_dispatch']['name'],'HOME')
+        self.assertFalse(response.json()['capabilities']['home']['allowed'])
+        self.assertEqual(self.client.post('/api/robot/home',json=body).status_code,409)
+        self.assertEqual([d for n,d in c.robot.client.commands if n=='START'],['HOME'])
+        self.assertIn('id="home"',self.client.get('/').text)
+        self.assertIn('/api/robot/home',self.client.get('/static/app.js').text)
+
     def test_control_requires_lease_and_single_hmi(self):
         self.assertEqual(self.post('/api/system/connect').status_code,423)
         self.assertEqual(self.claim().status_code,200)

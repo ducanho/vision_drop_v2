@@ -17,9 +17,8 @@ class CycleTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.cfg = load_config()
         self.cfg['workflow']['repeat_until_empty']=False
-        self.cfg['drop'].pop('position_variable',None)
         self.cfg['drop']['first_drop_z_mm']=330
-        # Retain regression coverage for the older fully monitored sequence.
+        # Legacy workflow flags must not change the full-cycle PICKDROP path.
         self.cfg['workflow']['end_after_moveunti_start']=False
         self.cfg['workflow'].pop('z_completion',None)
         # Shorter dwell only for fault-path tests. Production dwell tested separately.
@@ -50,19 +49,6 @@ class CycleTests(unittest.TestCase):
             self.c.confirm_drop(self.c.journal.state['cycle_id'],confirmed=True)
         return self.c.journal.snapshot()
 
-    def test_complete_one_target_one_movl_one_job_vacuum_kept(self):
-        self.start()
-        result=self.finish()
-        self.assertEqual(result['state'],'COMPLETE',result['error'])
-        self.assertEqual(result['target']['id'],1)
-        commands=self.c.robot.client.commands
-        self.assertEqual(sum(n=='MOVL' for n,_ in commands),2)
-        self.assertEqual([d for n,d in commands if n=='START'],['MOVEUNTI','H2ON','DROP','H2OFF'])
-        self.assertEqual(result['vacuum_job'],dict(name='H2ON',status='complete'))
-        self.assertFalse(any(n=='IOWRITE' for n,_ in commands))
-        self.assertEqual(self.c.robot.client.pose[2],530)
-        self.assertIsNone(result['pending'])
-        self.assertEqual([h['state'] for h in result['history']][-1],'COMPLETE')
 
     def test_production_ten_frames_two_seconds(self):
         self.c.cfg['vision'].update(stable_frames=10,stable_seconds=2)
@@ -72,54 +58,6 @@ class CycleTests(unittest.TestCase):
         self.assertEqual(self.finish()['state'],'COMPLETE')
         self.assertGreaterEqual(time.monotonic()-start,2)
 
-    def test_v1_single_xyz_move_then_moveunti_then_h2on_at_stop_z(self):
-        self.c.robot.client.pose[2]=600
-        original=self.c.robot.start_hand_job
-        def check_stopped(channel,on,config=None):
-            if not on:
-                return original(channel,on,config)
-            self.assertEqual((channel,on),(2,True))
-            self.assertFalse(self.c.robot.status()['running'])
-            self.assertTrue(self.c.robot.laser())
-            self.assertEqual(self.c.robot.pose()[0]['z'],470)
-            return original(channel,on,config)
-        with patch.object(self.c.robot,'start_hand_job',check_stopped):
-            self.start()
-            result=self.finish()
-        self.assertEqual(result['state'],'COMPLETE',result['error'])
-        commands=[(n,d) for n,d in self.c.robot.client.commands if n in ('LOADV','MOVL','START','IOWRITE','HOLD')]
-        self.assertEqual([n for n,d in commands],['LOADV','START','START','START','MOVL','START','MOVL'])
-        self.assertEqual([d for n,d in commands if n=='START'],['MOVEUNTI','H2ON','DROP','H2OFF'])
-        fields=commands[0][1].split(',')
-        self.assertEqual(list(map(float,fields[4:7])),[result['target']['pose'][a] for a in ('x','y','z')])
-        self.assertEqual(float(fields[6]),self.c.cfg['settings']['z_safe'])
-        self.assertEqual(self.c.robot.pose()[0]['z'],530)
-        self.assertNotIn('MOVE_TO_SAFE',[h['state'] for h in result['history']])
-
-    def test_v1_lost_h2on_reply_does_not_repeat_or_complete(self):
-        original=self.c.robot.client.execute
-        def lost(name,data=''):
-            result=original(name,data)
-            if name=='START' and data=='H2ON':
-                from robot.protocol import OutcomeUnknown
-                raise OutcomeUnknown('H2ON response lost')
-            return result
-        with patch.object(self.c.robot.client,'execute',lost):
-            self.start()
-            result=self.finish()
-        self.assertEqual(result['state'],'FAULT')
-        self.assertEqual(result['vacuum_job']['status'],'unknown')
-        self.assertTrue(result['outcome_unknown'])
-        self.assertEqual(result['pending']['payload'],'H2ON')
-        self.assertEqual(sum(n=='START' and d=='H2ON' for n,d in self.c.robot.client.commands),1)
-
-    def test_moveunti_ack_does_not_prove_p002_arrival(self):
-        self.c.robot.client.scenario='move_timeout'
-        self.start()
-        result=self.finish()
-        self.assertEqual(result['state'],'FAULT')
-        self.assertIn('timeout',result['error'])
-        self.assertFalse(any(n=='START' and d=='H2ON' for n,d in self.c.robot.client.commands))
 
     def test_job_missing(self):
         self.c.robot.client.available_job=False
@@ -131,6 +69,7 @@ class CycleTests(unittest.TestCase):
 
     def test_unverified_real_job_blocked_before_write(self):
         self.c.mock=False
+        self.c.cfg['pickdrop']['operator_confirmed']=False
         with self.assertRaises(RuntimeError):
             self.start()
         self.assertFalse(any(n in ('MOVL','START','IOWRITE') for n,_ in self.c.robot.client.commands))
@@ -140,7 +79,7 @@ class CycleTests(unittest.TestCase):
         self.start()
         result=self.finish()
         self.assertEqual(result['state'],'FAULT')
-        self.assertIn('timeout',result['error'])
+        self.assertIn('B091=2',result['error'])
         self.assertEqual(self.c.robot.vacuum,[None,None])
 
     def test_laser_on_before_z(self):
@@ -149,21 +88,6 @@ class CycleTests(unittest.TestCase):
             self.start()
         self.assertFalse(any(n in ('MOVL','START') for n,_ in self.c.robot.client.commands))
 
-    def test_laser_appears_after_xy_before_job(self):
-        original=self.c._job
-        def early():
-            self.c.robot.client.laser=True
-            original()
-        with patch.object(self.c,'_job',early):
-            self.start()
-            self.assertIn('trước Z',self.finish()['error'])
-        self.assertFalse(any(n=='START' for n,_ in self.c.robot.client.commands))
-
-    def test_unproven_job_stop_blocks_vacuum(self):
-        self.c.robot.client.scenario='unproven_stop'
-        self.start()
-        self.assertIn('Chưa chứng minh',self.finish()['error'])
-        self.assertFalse(any(n=='IOWRITE' or (n=='START' and d=='H2ON') for n,d in self.c.robot.client.commands))
 
     def test_hold_cancels_and_never_resumes(self):
         self.start()
@@ -191,13 +115,6 @@ class CycleTests(unittest.TestCase):
             self.assertIn('alarm',self.finish()['error'])
         self.assertFalse(any(n=='START' for n,_ in self.c.robot.client.commands))
 
-    def test_tcp_lost_after_movl_never_retries(self):
-        self.c.robot.client.scenario='lost_movl_reply'
-        self.start()
-        result=self.finish()
-        self.assertTrue(result['outcome_unknown'])
-        self.assertIsNotNone(result['pending'])
-        self.assertEqual(sum(n=='MOVL' for n,_ in self.c.robot.client.commands),1)
 
     def test_failed_tcp_telemetry_is_unknown(self):
         self.c.vacuum(1,True)
@@ -233,7 +150,7 @@ class CycleTests(unittest.TestCase):
             Cycle(self.cfg,True,self.c.journal.path)
 
     def test_fault_does_not_restart_and_requires_inspection_ack(self):
-        self.c.robot.client.scenario='lost_movl_reply'
+        self.c.robot.client.scenario='lost_pickdrop_reply'
         self.start()
         self.finish()
         with self.assertRaises(RuntimeError):
@@ -291,9 +208,10 @@ class CycleTests(unittest.TestCase):
         self.c.robot.mock=False
         self.assertFalse(stop_reason_proven(self.c.robot,dict(running_seen=True,laser_edge=True)))
 
-    def test_full_real_is_blocked_even_after_commissioning_flags(self):
+    def test_unconfirmed_pickdrop_is_blocked_even_after_legacy_commissioning_flags(self):
         from workflow.safety_checks import commissioning_hash
         cfg=self.cfg
+        cfg['pickdrop']['operator_confirmed']=False
         cfg['motion'].update(expected_tool=0,expected_posture=0)
         cfg['laser']['verified']=True
         cfg['job'].update(verified=True,start_verified=True,min_z=0,max_descent_mm=500,speed_mm_s=5)
@@ -302,7 +220,7 @@ class CycleTests(unittest.TestCase):
                 cfg['commissioning'][key]=True
         cfg['commissioning']['evidence']='test evidence'
         cfg['commissioning']['config_sha256']=commissioning_hash(cfg)
-        with self.assertRaisesRegex(RuntimeError,'adapter'):
+        with self.assertRaisesRegex(RuntimeError,'REAL PICKDROP'):
             real_gate(cfg)
 
     def test_all_not_ready_flags_block(self):
@@ -335,8 +253,8 @@ class CycleTests(unittest.TestCase):
             result=self.finish()
             self.assertEqual(result['state'],'COMPLETE',result['error'])
             self.assertEqual(result['target']['xyz'][:2],first['target']['xyz'][:2])
-            self.assertEqual(sum(n=='MOVL' for n,d in self.c.robot.client.commands),4)
-            self.assertEqual([d for n,d in self.c.robot.client.commands if n=='START'],['MOVEUNTI','H2ON','DROP','H2OFF','MOVEUNTI','H2ON','DROP','H2OFF'])
+            self.assertEqual(sum(n=='MOVL' for n,d in self.c.robot.client.commands),0)
+            self.assertEqual([d for n,d in self.c.robot.client.commands if n=='START'],['PICKDROP','PICKDROP'])
 
 
 if __name__=='__main__':

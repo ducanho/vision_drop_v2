@@ -11,6 +11,7 @@ class MockClient:
         self.running = self.holding = self.alarm = self.laser = False
         self.servo=True
         self.available_job = True
+        self.available_home = True
         self.scenario = ''
         self.commands = []
         self.deadline = 0
@@ -26,11 +27,47 @@ class MockClient:
         self.drop_uses_p010=False
         self.b090=0
         self.drop_checkpoint=0
+        self.b091=0
+        self.p011=['1','0','0','0','200','0','0','0','0','0']
+        self.hand2_on=False
+        self.i000=3500
 
     def execute(self, name, data=''):
         self.commands.append((name, data))
         if self.scenario == 'tcp_lost':
             raise OutcomeUnknown('TCP lost; robot may be moving')
+        if self.activity=='pickdrop' and not self.holding:
+            if self.scenario=='pickdrop_disconnect':
+                raise OutcomeUnknown('PICKDROP telemetry lost')
+            elapsed=time.monotonic()-self.pickdrop_started
+            # Abstract internal laser search and vacuum OR. These are simulated
+            # sensors, never PC commands, and do not validate the malformed JBI.
+            if elapsed>=.05:
+                self.laser=self.scenario not in ('laser_timeout','unproven_stop')
+                self.hand2_on=self.laser
+            if elapsed>=.1 and self.laser:
+                self.pressure_inputs=([False,False] if self.scenario=='vacuum_timeout' else
+                                      [False,True] if self.scenario=='vacuum_sensor_2' else [True,False])
+            fault=(elapsed>=.15 and (not self.laser or not any(self.pressure_inputs)))
+            if time.monotonic() >= self.drop_checkpoint and not fault:
+                self.b090=1
+            if fault or time.monotonic() >= self.deadline:
+                if self.scenario in ('pickdrop_fault','laser_timeout','unproven_stop','vacuum_timeout'):
+                    self.b091=2
+                    self.running=False  # PAUSE at fault; no release or lift.
+                    self.activity=None
+                elif self.scenario not in ('pickdrop_timeout','move_timeout'):
+                    self.pose=list(map(float,self.p010[2:8]))
+                    for i in range(3):
+                        self.pose[i]+=float(self.p011[2+i])
+                    if self.scenario=='pickdrop_bad_pose':
+                        self.pose[2]+=20
+                    self.b091=1
+                    self.hand2_on=False
+                    self.pressure_inputs=[False,False]
+                    self.laser=False
+                    self.running=False
+                    self.activity=None
         if self.activity=='drop' and time.monotonic() >= self.drop_checkpoint:
             self.b090=1
         if self.activity and time.monotonic() >= self.deadline and not self.holding:
@@ -51,6 +88,10 @@ class MockClient:
             elif self.activity=='hand':
                 self.running=False
                 self.activity=None
+            elif self.activity=='home' and self.scenario!='home_timeout':
+                self.pose=[530.,270.,0.,180.,0.,90.]
+                self.running=False
+                self.activity=None
             elif self.activity=='drop':
                 self.pose=list(map(float,self.p010[2:8])) if self.drop_uses_p010 else self.drop_pose[:]
                 self.laser=False
@@ -63,14 +104,29 @@ class MockClient:
         if name == 'RPOSJ':
             return ','.join(['0']*6)
         if name == 'RJDIR':
-            return 'MOVEUNTI,HOME' if self.available_job else 'HOME'
+            return ','.join((['MOVEUNTI','PICKDROP'] if self.available_job else [])+
+                            (['HOME'] if self.available_home else []))
         if name == 'RJSEQ':
             return self.last_job+',1,1'
         if name == 'SAVEV':
+            if data=='1,0':
+                return str(self.i000)
             if data=='0,90':
                 return str(self.b090)
+            if data=='0,91':
+                return str(self.b091)
+            if data=='4,11':
+                return ','.join(self.p011)
             return ','.join(self.p002 if data=='4,2' else self.p009 if data=='4,9' else self.p010)
         if name == 'LOADV':
+            if data.startswith('1,0,'):
+                value=int(data.split(',')[2])
+                if not 0<=value<=5000:
+                    raise ValueError('I000 outside speed range')
+                self.i000=value
+                if self.scenario=='lost_i000_reply':
+                    raise OutcomeUnknown('LOADV I000 response lost')
+                return '0000'
             if data.startswith('4,2,'):
                 self.p002=data.split(',')[2:]
             else:
@@ -89,6 +145,25 @@ class MockClient:
                 raise OutcomeUnknown('MOVL response lost')
             return '0000'
         if name == 'START':
+            if data=='HOME':
+                if not self.available_home:
+                    raise RuntimeError('JOB missing')
+                self.last_job=data
+                self.activity,self.running,self.deadline='home',True,time.monotonic()+.25
+                if self.scenario=='lost_home_reply':
+                    raise OutcomeUnknown('HOME response lost')
+                return '0000'
+            if data=='PICKDROP':
+                if not self.available_job:
+                    raise RuntimeError('JOB missing')
+                self.b090=self.b091=0
+                self.pickdrop_started=time.monotonic()
+                self.last_job=data
+                self.activity,self.running,self.deadline='pickdrop',True,time.monotonic()+.65
+                self.drop_checkpoint=time.monotonic()+.2
+                if self.scenario=='lost_pickdrop_reply':
+                    raise OutcomeUnknown('PICKDROP response lost')
+                return '0000'
             if data=='DROP' and data in self.hand_jobs:
                 self.b090=0
                 self.drop_checkpoint=time.monotonic()+.06

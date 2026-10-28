@@ -14,9 +14,10 @@ from .safety_checks import ready, workspace, reached, real_gate, manual_io_ready
 from robot.vacuum import validate_mapping
 from robot.position_variable import pick_position,verify_p002
 from .drop import DropWorkflow,StackStore
+from .pickdrop import PickDropWorkflow, real_blockers
 
 
-class Cycle(DropWorkflow):
+class Cycle(PickDropWorkflow, DropWorkflow):
     def __init__(self, cfg, mock=True, journal_path=None):
         self.cfg, self.mock = deepcopy(cfg), mock
         self.lock = threading.RLock()
@@ -89,7 +90,9 @@ class Cycle(DropWorkflow):
             age = time.monotonic()-self.telemetry_stamp
             if age > 2:
                 t.update(connected=False, flags={k:None for k in t['flags']}, position=None, laser=None,
-                         laser_raw_byte=None, vacuum=[None,None],vacuum_raw_byte=None,vacuum_inputs=[None,None])
+                         laser_raw_byte=None, vacuum=[None,None],vacuum_raw_byte=None,vacuum_inputs=[None,None],speed_i000=None)
+            if not t['connected']:
+                t['speed_i000']=None
             result.update(robot=t, camera=self.vision.status(), mode='MOCK' if self.mock else 'REAL', busy=self.busy,
                           settings=deepcopy(self.cfg['settings']), telemetry_age=round(age,2),
                           vacuum_mapping=self.robot.vacuum_config['mode'],
@@ -97,7 +100,7 @@ class Cycle(DropWorkflow):
                           vacuum_jobs=deepcopy(self.robot.vacuum_config.get('jobs',{})),
                           end_after_moveunti_start=self.cfg.get('workflow',{}).get('end_after_moveunti_start',False),
                           z_completion=self.cfg.get('workflow',{}).get('z_completion'),
-                          real_limit='Chưa có tín hiệu chứng minh nguyên nhân dừng JOB; REAL không tự kích vacuum sau MOVEUNTI' if not self.mock and not operator_motion_workflow(self.cfg) else '')
+                          real_limit='; '.join(real_blockers(self.cfg)) if not self.mock else '')
             result['capabilities'] = {}
             for stage in ('full_cycle','xy_only','moveunti_only','vacuum_only'):
                 reason = ''
@@ -125,6 +128,21 @@ class Cycle(DropWorkflow):
             except RuntimeError as exc:
                 reason=str(exc)
             result['capabilities']['release_hold']=dict(allowed=not reason,reason=reason)
+            reason=''
+            try:
+                self._home_state_ready()
+                if not t['connected']:
+                    raise RuntimeError('Kết nối robot trước khi gọi HOME')
+                ready(t['flags'])
+            except RuntimeError as exc:
+                reason=str(exc)
+            result['capabilities']['home']=dict(allowed=not reason,reason=reason)
+            reason=''
+            try:
+                self._speed_write_ready(t['flags'],t['connected'])
+            except RuntimeError as exc:
+                reason=str(exc)
+            result['capabilities']['speed_i000']=dict(allowed=not reason,reason=reason)
             for action,check in (('servo_on',servo_on_ready),('servo_off',servo_off_ready)):
                 reason=''
                 try:
@@ -168,9 +186,11 @@ class Cycle(DropWorkflow):
                 raise RuntimeError('Yêu cầu cũ; tải lại trạng thái HMI')
             if self.busy or state['state'] != 'IDLE':
                 raise RuntimeError('Cần ACK; chỉ một cycle được phép chạy')
+            if state['pending'] or state['outcome_unknown']:
+                raise RuntimeError('Kiểm tra và ACK kết quả lệnh chưa xác định trước START')
             if stage not in ('full_cycle','xy_only','moveunti_only','vacuum_only'):
                 raise ValueError('Stage không hợp lệ')
-            if stage=='vacuum_only' or (stage=='full_cycle' and not self.cfg.get('workflow',{}).get('end_after_moveunti_start',False)):
+            if stage=='vacuum_only':
                 validate_mapping(self.cfg['vacuum'])
                 if self.cfg['vacuum'].get('method')!='job':
                     raise RuntimeError('V1 yêu cầu JOB HAND 2 ON đã xác nhận')
@@ -187,7 +207,7 @@ class Cycle(DropWorkflow):
                                 requests=state['requests']+[request_id], pending=None, outcome_unknown=False,
                                 vacuum_job=None,manual_job=None,job_dispatch=None,job_start_attempted=False,moveunti_completion=None,
                                 drop_release=None,drop_target=None,drop_safe_pose=None,drop_plan=None,drop_attempt_cycle_id=None,
-                                stop_reason=None,post_drop_target=None,drop_variable=None,pick_variable=None)
+                                stop_reason=None,post_drop_target=None,drop_variable=None,pick_variable=None,pickdrop=None)
             self.thread = threading.Thread(target=self._run, args=(stage,), daemon=True, name='pick-cycle')
             self.thread.start()
 
@@ -204,7 +224,7 @@ class Cycle(DropWorkflow):
         self.prefetch=dict(state='WAITING_B090',cycle_id=self.journal.state['cycle_id'],
                            b090=None,reset_confirmed=False,reason=None,
                            connection_generation=self.robot.connection_generation)
-        self._prefetch_event('DROP_STARTED')
+        self._prefetch_event('PICKDROP_STARTED')
         self._poll_drop_prefetch()
 
     def _poll_drop_prefetch(self):
@@ -218,8 +238,8 @@ class Cycle(DropWorkflow):
                     raise RuntimeError('DROP cycle changed')
                 if self.prefetch['connection_generation']!=self.robot.connection_generation:
                     raise RuntimeError('NX100 reconnected')
-                if not self.robot.connected or self.robot.current_job()!='DROP':
-                    raise RuntimeError('DROP connection/job unverified')
+                if not self.robot.connected or self.robot.current_job()!='PICKDROP':
+                    raise RuntimeError('PICKDROP connection/job unverified')
                 value=self.robot.read_b090()
                 self.prefetch['b090']=value
                 if value==0 and not self.prefetch['reset_confirmed']:
@@ -560,7 +580,7 @@ class Cycle(DropWorkflow):
                                outcome_unknown=False,vacuum_job=None,manual_job=None,job_dispatch=None,
                                job_start_attempted=False,moveunti_completion=None,drop_release=None,
                                drop_target=None,drop_safe_pose=None,drop_plan=None,drop_attempt_cycle_id=None,
-                               post_drop_target=None,stop_reason=None,drop_variable=None,pick_variable=None)
+                               post_drop_target=None,stop_reason=None,drop_variable=None,pick_variable=None,pickdrop=None)
             except Exception as exc:
                 with self.lock:
                     if self.journal.state['state']!='HOLD':
@@ -575,7 +595,13 @@ class Cycle(DropWorkflow):
                     self._step('COMPLETE',stop_reason='no_boards',error='')
                     return
                 self._prepare_pick_variable(target)
-            if stage in ('full_cycle','moveunti_only'):
+            if stage=='full_cycle':
+                self._prepare_drop_variable()
+                self._start_pickdrop()
+                self._wait_pickdrop_complete()
+                self._confirm_pickdrop()
+                return
+            if stage=='moveunti_only':
                 if self.cfg.get('workflow',{}).get('end_after_moveunti_start',False):
                     self._start_moveunti()
                     last=self.journal.state['target']
@@ -595,19 +621,6 @@ class Cycle(DropWorkflow):
                 self._step('VACUUM_ACTIVATING',vacuum_job=dict(name=name,status='running'))
                 self._execute_hand_job(2,True,self.cfg['vacuum'])
                 self._step('VACUUM_ACTIVATING',vacuum_job=dict(name=name,status='complete'))
-            if stage=='full_cycle':
-                self._prepare_drop_variable()
-                with self.lock,self.robot.lock:
-                    self._check_cancel()
-                    data=self.refresh()
-                    ready(data['flags'])
-                    values=data.get('vacuum_inputs',[])
-                    if len(values)!=2 or any(type(v) is not bool for v in values) or not any(values):
-                        raise RuntimeError('Pressure OFF/UNKNOWN trước START DROP; không DROP')
-                    self._command('START','DROP',lambda:self.robot.client.execute('START','DROP'))
-                    self._arm_drop_prefetch()
-                self._finish_drop()
-                return
             last = self.journal.state['target']
             self._step('COMPLETE',last_target=last['xyz'] if last else self.journal.state.get('last_target'))
             self.refresh()
@@ -643,6 +656,37 @@ class Cycle(DropWorkflow):
         except Exception as exc:
             self.journal.update(error=f'HOLD chưa xác nhận; robot có thể vẫn chuyển động: {exc}')
             raise
+
+    def _home_state_ready(self):
+        if self.stopping.is_set() or self.busy or self.journal.state['state'] not in ('IDLE','COMPLETE'):
+            raise RuntimeError('HOME chỉ khả dụng khi IDLE/COMPLETE và cycle đã dừng')
+        if self.journal.state['pending'] or self.journal.state['outcome_unknown']:
+            raise RuntimeError('Kiểm tra và ACK kết quả lệnh chưa xác định trước HOME')
+
+    def home(self):
+        """Dispatch the existing pendant JOB; never synthesize a HOME motion."""
+        with self.lock,self.robot.lock:
+            self._home_state_ready()
+            if not self.robot.connected:
+                raise RuntimeError('Kết nối robot trước khi gọi HOME')
+            ready(self.robot.status())
+            if not job_control.exists(self.robot.client,'HOME'):
+                raise RuntimeError('JOB HOME không tồn tại')
+            self.cancel.clear()
+            self.vision.clear_next_pick('HOME')
+            self.prefetch.update(state='INVALID',reason='HOME')
+            self.journal.update(state='START_HOME',cycle_id=uuid.uuid4().hex,target=None,
+                                error='',job_dispatch=None,automatic_repeat=False,job_start_attempted=False)
+            try:
+                ready(self.robot.status())
+                self.journal.update(job_start_attempted=True)
+                self._command('START','HOME',lambda:job_control.start(self.robot.client,'HOME'))
+                # ACK is handoff, never a claim that the HOME pose is reached.
+                self.journal.update(state='JOB_DISPATCHED',job_dispatch=dict(
+                    name='HOME',accepted=True,completion_verified=False))
+            except Exception as exc:
+                self.journal.update(state='FAULT',error=str(exc),outcome_unknown=True)
+                raise
 
     def acknowledge(self, inspected=False):
         with self.lock:
@@ -811,17 +855,49 @@ class Cycle(DropWorkflow):
                                         manual_job=dict(name=name,status='unknown'))
             logging.getLogger('cycle').exception('HAND job fault')
 
-    def configure(self, values, drop_values=None):
-        with self.lock, self.vision.lock:
+    def _speed_write_ready(self,flags,connected):
+        if self.stopping.is_set() or self.busy or self.journal.state['state']!='IDLE':
+            raise RuntimeError('Chỉ ghi SPEED I000 khi IDLE và không có cycle hoạt động')
+        if self.journal.state['pending'] or self.journal.state['outcome_unknown']:
+            raise RuntimeError('Kiểm tra và ACK kết quả lệnh chưa xác định trước SPEED')
+        if not connected:
+            raise RuntimeError('Kết nối robot trước khi ghi SPEED I000')
+        manual_io_ready(flags)
+
+    def _write_speed_i000(self,value):
+        flags=self.robot.status() if self.robot.connected else {}
+        self._speed_write_ready(flags,self.robot.connected)
+        try:
+            self._command('LOADV',f'1,0,{value}',lambda:self.robot.write_i000(value))
+            actual=self.robot.read_i000()
+            if actual!=value:
+                raise RuntimeError(f'SPEED I000 readback không khớp: ghi {value}, đọc {actual}')
+            self.journal.update(speed_write=dict(value=actual,verified=True,
+                                connection_generation=self.robot.connection_generation))
+            self.telemetry.update(speed_i000=actual,speed_error='')
+        except Exception as exc:
+            self.telemetry.update(speed_i000=None,speed_error=str(exc))
+            self.journal.update(state='FAULT',error=str(exc),outcome_unknown=True)
+            raise RuntimeError('Ghi/verify SPEED I000 thất bại: '+str(exc)) from exc
+
+    def configure(self, values, drop_values=None, speed_i000=...):
+        with self.lock, self.vision.lock, self.robot.lock:
             if self.busy or self.journal.state['state'] != 'IDLE':
                 raise RuntimeError('Chỉ sửa cấu hình khi IDLE')
             validated=validate_settings(values)
+            if speed_i000 is not ...:
+                if type(speed_i000) is not int or not 0<=speed_i000<=5000:
+                    raise ValueError('SPEED I000 cần số nguyên từ 0 đến 5000')
             if drop_values is not None:
                 self._stack_edit_ready()
                 candidate=self.stack.validate_values(drop_values)
                 low,high=self.cfg['workspace']['z']
                 if not low<=candidate['first_drop_z_mm']<=min(high,self.cfg['drop']['safe_z_mm']):
                     raise ValueError('Z thả đầu phải trong workspace và không cao hơn DROP SAFE')
+            # Validate every field before writing; a failed SPEED write saves no local settings.
+            if speed_i000 is not ...:
+                self._write_speed_i000(speed_i000)
+            if drop_values is not None:
                 self.stack.configure_values(drop_values)
             self.cfg['settings'].update(validated)
             # Stored separately for MOCK/REAL, never silently transferred between modes.

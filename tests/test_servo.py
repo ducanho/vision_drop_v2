@@ -83,6 +83,9 @@ class ServoTests(unittest.TestCase):
         self.assertEqual(self.controls(),[])
 
     def test_readback_may_be_delayed_without_resending(self):
+        # This checks delayed readback, not the timeout boundary. Allow Windows
+        # scheduler granularity to deliver three polls; timeout tests stay short.
+        self.c.cfg['timeout_seconds']=.3
         execute=self.c.robot.client.execute
         reads=0
         def delayed(name,data=''):

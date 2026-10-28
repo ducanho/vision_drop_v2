@@ -41,17 +41,17 @@ class RepeatTests(unittest.TestCase):
     def test_two_boards_then_empty_stops_without_third_move(self):
         self.prefetch_scene=lambda items:[] if self.c.stack.snapshot()['stacked_count']>=1 else items
         sample=self.c.vision.sample
-        lift=self.c._after_h2off_move
+        lift=self.c._confirm_pickdrop
         lifts=[]
         prefills=[]
         def observe():
             frame,stamp,items=sample()
             return frame,stamp,[] if self.c.stack.snapshot()['stacked_count']>=2 else items
-        def raised(pose):
-            lift(pose)
+        def raised():
+            lift()
             lifts.append(self.c.robot.pose()[0]['z'])
             prefills.append(self.c.journal.state.get('target_prefilled_frames',0))
-        with patch.object(self.c.vision,'sample',side_effect=observe),patch.object(self.c,'_after_h2off_move',side_effect=raised):
+        with patch.object(self.c.vision,'sample',side_effect=observe),patch.object(self.c,'_confirm_pickdrop',side_effect=raised):
             s=self.run_loop()
         self.assertEqual(s['state'],'COMPLETE',s['error'])
         self.assertEqual(s['stop_reason'],'no_boards')
@@ -60,8 +60,8 @@ class RepeatTests(unittest.TestCase):
         self.assertGreaterEqual(prefills[1],2)
         self.assertEqual(self.c.stack.snapshot()['stacked_count'],2)
         self.assertEqual(len(set(self.c.stack.data['completed_drop_cycle_ids'])),2)
-        self.assertEqual([d for n,d in self.c.robot.client.commands if n=='START'],['MOVEUNTI','H2ON','DROP','H2OFF']*2)
-        self.assertEqual(sum(n=='MOVL' for n,d in self.c.robot.client.commands),2)
+        self.assertEqual([d for n,d in self.c.robot.client.commands if n=='START'],['PICKDROP']*2)
+        self.assertEqual(sum(n=='MOVL' for n,d in self.c.robot.client.commands),0)
         self.assertFalse(any(n=='HOLD' for n,d in self.c.robot.client.commands))
 
     def test_empty_initial_scene_completes_without_motion(self):
@@ -77,7 +77,7 @@ class RepeatTests(unittest.TestCase):
 
     def test_repeated_full_cycles_pick_12341_even_when_id_one_reappears(self):
         sample=self.c.vision.sample
-        lift=self.c._after_h2off_move
+        lift=self.c._confirm_pickdrop
         picked=[]
         def next_scene(items):
             count=self.c.stack.snapshot()['stacked_count']+1
@@ -94,10 +94,10 @@ class RepeatTests(unittest.TestCase):
             boards=[{**items[0],'id':i,'instance':100+count if i==1 else i,
                      'xyz':(700+i*40,100,0)} for i in (4,1,3,2)]
             return frame,stamp,boards
-        def raised(pose):
-            lift(pose)
+        def raised():
+            lift()
             picked.append(self.c.journal.state['target']['id'])
-        with patch.object(self.c.vision,'sample',side_effect=observe),patch.object(self.c,'_after_h2off_move',side_effect=raised):
+        with patch.object(self.c.vision,'sample',side_effect=observe),patch.object(self.c,'_confirm_pickdrop',side_effect=raised):
             s=self.run_loop(timeout=20)
         self.assertEqual(s['state'],'COMPLETE',s['error'])
         self.assertEqual(picked,[1,2,3,4,1])
@@ -106,29 +106,29 @@ class RepeatTests(unittest.TestCase):
 
     def test_camera_loss_after_first_board_faults_without_next_pick(self):
         sample=self.c.vision.sample
-        lift=self.c._after_h2off_move
-        def lost_after_lift(pose):
-            lift(pose)
+        lift=self.c._confirm_pickdrop
+        def lost_after_lift():
+            lift()
             self.c.vision.connected=False
         def observe():
             if self.c.stack.snapshot()['stacked_count']:
                 raise RuntimeError('Camera disconnected')
             return sample()
-        with patch.object(self.c.vision,'sample',side_effect=observe),patch.object(self.c,'_after_h2off_move',side_effect=lost_after_lift):
+        with patch.object(self.c.vision,'sample',side_effect=observe),patch.object(self.c,'_confirm_pickdrop',side_effect=lost_after_lift):
             s=self.run_loop()
         self.assertEqual(s['state'],'FAULT')
         self.assertIn('Camera disconnected',s['error'])
         self.assertIsNone(s.get('stop_reason'))
         self.assertEqual(self.c.stack.snapshot()['stacked_count'],1)
-        self.assertEqual(sum(n=='MOVL' for n,d in self.c.robot.client.commands),1)
+        self.assertEqual(sum(n=='MOVL' for n,d in self.c.robot.client.commands),0)
 
     def test_hold_after_lift_prevents_next_pick(self):
-        lift=self.c._after_h2off_move
-        def raised(pose):
-            lift(pose)
+        lift=self.c._confirm_pickdrop
+        def raised():
+            lift()
             self.c.hold()
-        with patch.object(self.c,'_after_h2off_move',side_effect=raised):
+        with patch.object(self.c,'_confirm_pickdrop',side_effect=raised):
             s=self.run_loop()
         self.assertEqual(s['state'],'HOLD')
         self.assertEqual(self.c.stack.snapshot()['stacked_count'],1)
-        self.assertEqual(sum(n=='MOVL' for n,d in self.c.robot.client.commands),1)
+        self.assertEqual(sum(n=='MOVL' for n,d in self.c.robot.client.commands),0)

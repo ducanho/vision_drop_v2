@@ -43,7 +43,7 @@ class ByteReadTests(unittest.TestCase):
                     robot.read_b090()
 
     def test_only_b090_read_is_added_and_byte_writes_stay_blocked(self):
-        for command, data in [('SAVEV','0,89'), ('SAVEV','0,91'), ('LOADV','0,90,1')]:
+        for command, data in [('SAVEV','0,89'), ('SAVEV','0,92'), ('LOADV','0,90,1')]:
             with self.assertRaises(ValueError):
                 encode_command(command, data)
 
@@ -57,7 +57,7 @@ class CheckpointTests(unittest.TestCase):
         self.c=Cycle(cfg, True, Path(self.tmp.name)/'execution.json')
         self.c.robot.connect()
         self.c.journal.update(cycle_id='drop-current', automatic_repeat=True, target=board())
-        self.c.robot.client.last_job='DROP'
+        self.c.robot.client.last_job='PICKDROP'
 
     def tearDown(self):
         self.c.close()
@@ -109,10 +109,12 @@ class CheckpointTests(unittest.TestCase):
 
     def test_missing_reset_finishes_drop_and_falls_back_to_full_stability(self):
         self.c._prepare_drop_variable()
-        self.c._command('START','DROP',lambda:self.c.robot.client.execute('START','DROP'))
+        self.c._prepare_pick_variable(dict(x=850,y=100,z=500,rx=180,ry=0,rz=90))
         with patch.object(self.c.robot,'read_b090',return_value=1):
+            self.c._start_pickdrop()
             self.c._arm_drop_prefetch()
-            self.c._finish_drop()
+            self.c._wait_pickdrop_complete()
+            self.c._confirm_pickdrop()
         self.assertEqual(self.c.journal.state['state'],'COMPLETE')
         self.assertEqual(self.c.prefetch['state'],'INVALID')
         self.assertEqual(self.c.stack.snapshot()['stacked_count'],1)
@@ -131,7 +133,7 @@ class CheckpointTests(unittest.TestCase):
     def test_wrong_job_cycle_or_connection_cannot_trigger(self):
         for kind in ('job','cycle','reconnect','disconnect'):
             with self.subTest(kind=kind):
-                self.c.robot.client.last_job='DROP'
+                self.c.robot.client.last_job='PICKDROP'
                 self.c.robot.connected=True
                 with patch.object(self.c.robot,'read_b090',return_value=0):
                     self.c._arm_drop_prefetch()
@@ -271,7 +273,7 @@ class OverlapTests(unittest.TestCase):
                 execute=c.robot.client.execute
                 def slow_drop(name,data=''):
                     result=execute(name,data)
-                    if name=='START' and data=='DROP':
+                    if name=='START' and data=='PICKDROP':
                         c.robot.client.deadline=time.monotonic()+.5
                     return result
                 def observe():
@@ -288,13 +290,13 @@ class OverlapTests(unittest.TestCase):
                 self.assertFalse(c.busy)
                 self.assertEqual(c.journal.state['state'],'COMPLETE',c.journal.state['error'])
                 events='\n'.join(log.output)
-                self.assertLess(events.index('NEXT_TARGET_READY'),events.index('Z200_COMPLETED'))
-                self.assertLess(events.index('NEXT_TARGET_READY'),events.index('DROP_COMPLETED'))
-                self.assertLess(events.index('Z200_COMPLETED'),events.index('NEXT_TARGET_LOADED'))
-                self.assertLess(events.index('NEXT_TARGET_LOADED'),events.index('NEXT_MOVEUNTI_SENT'))
+                self.assertLess(events.index('NEXT_TARGET_READY'),events.index('PICKDROP_COMPLETED'))
+                self.assertLess(events.index('NEXT_TARGET_READY'),events.index('PICKDROP_COMPLETED'))
+                self.assertLess(events.index('PICKDROP_COMPLETED'),events.index('NEXT_TARGET_LOADED'))
+                self.assertLess(events.index('NEXT_TARGET_LOADED'),events.index('NEXT_PICKDROP_SENT'))
                 commands=c.robot.client.commands
-                self.assertEqual(sum(n=='MOVL' for n,d in commands),2)
-                self.assertEqual([d for n,d in commands if n=='START'],['MOVEUNTI','H2ON','DROP','H2OFF']*2)
+                self.assertEqual(sum(n=='MOVL' for n,d in commands),0)
+                self.assertEqual([d for n,d in commands if n=='START'],['PICKDROP']*2)
                 self.assertEqual(c.stack.snapshot()['stacked_count'],2)
             finally:
                 c.close()

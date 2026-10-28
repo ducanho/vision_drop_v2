@@ -2,24 +2,24 @@
 import re
 
 
-def exists(client):
+def exists(client, name='MOVEUNTI'):
     raw = client.execute('RJDIR', '*')
     names = [name.strip() for name in re.split(r'[,\r\n]+',raw) if name.strip()]
     if any(not re.fullmatch(r'[A-Za-z0-9_\-]{1,32}', n) for n in names):
         raise RuntimeError('RJDIR framing/names chưa được xác minh')
-    return 'MOVEUNTI' in names
+    return name in names
 
 
-def current(client):
+def current(client, name='MOVEUNTI'):
     raw = client.execute('RJSEQ')
     values = raw.split(',')
-    if len(values) != 3 or values[0] != 'MOVEUNTI' or not all(v.strip().isdigit() for v in values[1:]):
-        raise RuntimeError('RJSEQ không xác nhận MOVEUNTI')
+    if len(values) != 3 or values[0] != name or not all(v.strip().isdigit() for v in values[1:]):
+        raise RuntimeError('RJSEQ không xác nhận '+name)
     return raw
 
 
-def start(client):
-    return client.execute('START', 'MOVEUNTI')
+def start(client, name='MOVEUNTI'):
+    return client.execute('START', name)
 
 
 def stop_reason_proven(robot, observed):

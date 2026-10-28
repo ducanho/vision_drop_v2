@@ -157,6 +157,13 @@ def create_app(mock=False, config=None, journal_path=None):
             cycle.start(body['request_id'],body['revision'],body.get('stage','full_cycle'))
         return cycle.snapshot()
 
+    @app.post('/api/robot/home')
+    def home(request:Request,body:dict):
+        with cycle.lock:
+            authorized(request,body)
+            cycle.home()
+        return cycle.snapshot()
+
     @app.post('/api/robot/servo-on')
     def servo_on(request:Request,body:dict):
         with cycle.lock:
@@ -204,7 +211,7 @@ def create_app(mock=False, config=None, journal_path=None):
     def configure(request:Request,body:dict):
         with cycle.lock:
             authorized(request,body)
-            cycle.configure(body.get('settings'),body.get('drop_settings'))
+            cycle.configure(body.get('settings'),body.get('drop_settings'),body.get('speed_i000',...))
         return cycle.snapshot()
 
     @app.post('/api/drop/settings')

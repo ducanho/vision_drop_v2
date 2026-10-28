@@ -1,13 +1,12 @@
-"""Drop-only extension. No camera, pick, lift, or DROP JOB changes."""
+"""Persistent stack arithmetic, P009-derived P010, and compatible operator APIs."""
 from copy import deepcopy
 from decimal import Decimal
 import json
 import math
 import os
 import threading
-import time
 
-from .safety_checks import ready,reached,workspace
+from .safety_checks import ready,workspace
 from robot.position_variable import parse_p010,with_z,verify_p010
 
 
@@ -107,9 +106,7 @@ class StackStore:
 
 class DropWorkflow:
     def _prepare_drop_variable(self):
-        if self.cfg.get('drop',{}).get('position_variable') is None:
-            return
-        if self.cfg['drop']['position_variable']!=10:
+        if self.cfg.get('drop',{}).get('position_variable')!=10:
             raise RuntimeError('Chỉ hỗ trợ biến DROP P010')
         with self.lock,self.robot.lock:
             self._check_cancel()
@@ -121,113 +118,12 @@ class DropWorkflow:
             if target['z']>self.cfg['drop']['safe_z_mm']+self.cfg['motion']['xyz_tolerance']:
                 raise RuntimeError('Z thả cao hơn DROP SAFE; không ghi P010 hoặc gọi DROP')
             self._step('WRITING_DROP_P010',drop_target=target,drop_plan=height,
-                       drop_variable={'name':'P010','source':'P009','before':list(before),'expected':list(expected),'verified':False})
+                       drop_variable={'name':'P010','source':'P009','before':list(before),'expected':list(expected),'verified':False,
+                                      'cycle_id':self.journal.state['cycle_id'],
+                                      'connection_generation':self.robot.connection_generation})
             self._command('LOADV',payload,lambda:self.robot.client.execute('LOADV',payload))
             verify_p010(expected,self.robot.client.execute('SAVEV','4,10'))
             self._step('DROP_P010_WRITTEN',drop_variable={**self.journal.state['drop_variable'],'verified':True})
-
-    def _wait_drop_variable_target(self,target):
-        self._step('WAIT_DROP_POSITION')
-        deadline=time.monotonic()+self.cfg['drop'].get('job_timeout',120)
-        settled=0
-        while time.monotonic()<deadline:
-            self._check_cancel()
-            data=self.refresh()
-            ready(data['flags'],allow_running=True)
-            workspace(data['position'],self.cfg)
-            job=self.robot.current_job()
-            if job not in ('DROP',self.cfg['vacuum']['jobs'].get('2_off')):
-                raise RuntimeError('JOB hiện tại không còn DROP/H2OFF nội bộ; không cập nhật bộ đếm')
-            if job=='DROP':
-                self._poll_drop_prefetch()
-            settled=settled+1 if job=='DROP' and data['flags']['running'] is False and reached(data['position'],target,self.cfg) else 0
-            if settled>=self.cfg['motion']['settle_samples']:
-                return
-            self._wait(self.cfg['motion']['poll_seconds'])
-        raise RuntimeError('DROP chưa dừng tại đích cuối sau nâng Z+200; không cập nhật bộ đếm')
-
-    def _wait_drop_safe(self):
-        self._step('WAIT_DROP_SAFE')
-        deadline=time.monotonic()+self.cfg.get('drop',{}).get('job_timeout',120)
-        previous=None
-        settled=0
-        safe_z=self.cfg.get('drop',{}).get('safe_z_mm',600)
-        while time.monotonic()<deadline:
-            self._check_cancel()
-            data=self.refresh()
-            ready(data['flags'],allow_running=True)
-            p=data['position']
-            workspace(p,self.cfg)
-            if self.robot.current_job()!='DROP':
-                raise RuntimeError('JOB hiện tại không còn DROP; không hạ Z hoặc gọi H2OFF')
-            self._poll_drop_prefetch()
-            stopped=data['flags']['running'] is False
-            stable=previous is not None and reached(p,previous,self.cfg)
-            settled=settled+1 if stopped and stable and abs(p['z']-safe_z)<=self.cfg['motion']['xyz_tolerance'] else 0
-            previous=p.copy()
-            if settled>=self.cfg['motion']['settle_samples']:
-                self._step('DROP_SAFE_REACHED',drop_safe_pose=p)
-                return p
-            self._wait(self.cfg['motion']['poll_seconds'])
-        raise RuntimeError(f'DROP chưa dừng tại Z safe={safe_z}; không hạ Z hoặc gọi H2OFF')
-
-    def _finish_drop(self):
-        with self.lock:
-            cycle_id=self.journal.state['cycle_id']
-            if not cycle_id or self.journal.state.get('drop_attempt_cycle_id')==cycle_id:
-                raise RuntimeError('DROP đã được xử lý cho cycle này; không xử lý lặp')
-            self.journal.update(drop_attempt_cycle_id=cycle_id)
-        if self.cfg.get('drop',{}).get('position_variable') is not None:
-            receipt=self.journal.state.get('drop_variable') or {}
-            if not receipt.get('verified'):
-                raise RuntimeError('Chưa xác minh P010; không xác nhận DROP hoàn thành')
-            target=self.journal.state['drop_target']
-        else:
-            safe=self._wait_drop_safe()
-            height=self.stack.snapshot()
-            target={**safe,'z':height['next_drop_z_mm']}
-            workspace(target,self.cfg)
-            if target['z']>safe['z']+self.cfg['motion']['xyz_tolerance']:
-                raise RuntimeError('Z thả cao hơn DROP SAFE; không thực hiện chuyển động lên thay cho hạ Z')
-            self._step('CALCULATE_DROP_Z',drop_target=target,drop_plan=height)
-            self._move(target,'MOVING_TO_DROP_Z',required_start=safe)
-        # Operator-confirmed DROP owns H2OFF and the final Z+200 lift.
-        # Verify the final JOB pose, not a temporary stop at the release P010.
-        final_target={**target,'z':round(target['z']+200,3)}
-        workspace(final_target,self.cfg)
-        self._wait_drop_variable_target(final_target)
-        if self.prefetch['state']=='WAITING_B090':
-            self.prefetch.update(state='INVALID',reason='B090 reset/trigger not proven before DROP completion')
-            self.vision.clear_next_pick(self.prefetch['reason'])
-        self._prefetch_event('DROP_COMPLETED')
-        self._step('H2OFF_COMPLETE',post_drop_target=final_target,
-                   drop_release=dict(cycle_id=self.journal.state['cycle_id'],
-                   job='DROP',internal_h2off=True,job_completed=True,board_release_confirmed=False,
-                   vacuum_outputs=self.robot.vacuum[:]))
-        self._prefetch_event('H2OFF_COMPLETED')
-        self._prefetch_event('Z200_COMPLETED')
-        # Count only after the parent DROP has stopped at its final lifted pose.
-        # This records the command result, not a physical release sensor.
-        self._check_cancel()
-        self.stack.confirm(cycle_id,picked_id=(self.journal.state.get('target') or {}).get('id'))
-        self._step('STACK_COUNT_UPDATED',drop_release={**self.journal.state['drop_release'],
-                   'counted':True,'count_basis':'drop_completed'})
-        last=self.journal.state['target']
-        self._step('COMPLETE',last_target=last['xyz'] if last else self.journal.state.get('last_target'))
-
-    def _after_h2off_move(self,drop_pose):
-        motion=self.cfg.get('drop',{}).get('after_h2off_move')
-        if motion is None:
-            return
-        axis=motion.get('axis')
-        if axis not in ('x','z') or motion.get('distance_mm')!=200:
-            raise RuntimeError('Chưa xác nhận đúng trục di chuyển sau H2OFF')
-        target={**drop_pose,axis:round(drop_pose[axis]+200,3)}
-        workspace(target,self.cfg)
-        self._step('POST_H2OFF_MOVE',post_drop_target=target)
-        self._move(target,'POST_H2OFF_MOVE',required_start=drop_pose)
-        if axis=='z':
-            self._prefetch_event('Z200_COMPLETED')
 
     def _can_confirm_drop(self):
         s=self.journal.state

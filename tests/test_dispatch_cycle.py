@@ -32,7 +32,7 @@ class DispatchCycleTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def run_cycle(self):
-        self.c.start('dispatch-request-001',self.c.journal.state['revision'])
+        self.c.start('dispatch-request-001',self.c.journal.state['revision'],'moveunti_only')
         self.c.thread.join(timeout=4)
         self.assertFalse(self.c.busy)
         return self.c.journal.snapshot()
@@ -85,11 +85,13 @@ class DispatchCycleTests(unittest.TestCase):
         self.assertFalse(cfg['commissioning']['vacuum_only'])
         self.assertFalse(cfg['laser']['verified'])
         self.assertIsNone(cfg['job']['max_descent_mm'])
-        for stage in ('full_cycle','xy_only','moveunti_only'):
+        for stage in ('xy_only','moveunti_only'):
             real_gate(cfg,stage)
         cfg['job']['name']='OTHER'
         with self.assertRaises(RuntimeError):
-            real_gate(cfg,'full_cycle')
+            real_gate(cfg,'moveunti_only')
+        # full_cycle uses the confirmed PICKDROP contract, not legacy MOVEUNTI.
+        real_gate(cfg,'full_cycle')
 
     def test_real_branch_runs_with_live_metadata_and_without_static_tool_or_path_flags(self):
         self.c.mock=False

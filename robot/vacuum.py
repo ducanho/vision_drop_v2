@@ -8,7 +8,7 @@ def validate_mapping(cfg):
         names=cfg.get('jobs',{})
         if (cfg.get('verified') is not True or set(names)!={'1_on','1_off','2_on','2_off'}
                 or len(set(names.values()))!=4 or any(not isinstance(n,str) or not re.fullmatch(r'[A-Za-z0-9_\-]{1,32}',n)
-                or n=='MOVEUNTI' for n in names.values())):
+                or n in ('MOVEUNTI','DROP','PICKDROP','HOME') for n in names.values())):
             raise RuntimeError('Chưa xác nhận đúng bốn JOB HAND ON/OFF trên pendant')
         return
     if cfg.get('start') is None or any(b is None for b in cfg.get('bits',[])):
