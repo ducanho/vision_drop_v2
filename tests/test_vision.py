@@ -37,9 +37,9 @@ class StabilityTests(unittest.TestCase):
         self.assertEqual(len(self.s.samples),0)
         self.assertIsNone(self.s.update(12,17,[{**item(),'uncertain':True}],17))
 
-    def test_motion_over_three_mm_resets(self):
+    def test_motion_over_tolerance_resets(self):
         self.s.update(1,10,[item()],10)
-        self.s.update(2,10.1,[item(x=804)],10.1)
+        self.s.update(2,10.1,[item(x=800+self.s.cfg['tolerance_mm']+1)],10.1)
         self.assertEqual(len(self.s.samples),1)
 
     def test_identity_reuse_resets(self):
@@ -69,9 +69,10 @@ class CalibrationTests(unittest.TestCase):
         camera.enumerate.return_value=[{'index':0}]
         info=SimpleNamespace(nTLayerType=1,SpecialInfo=SimpleNamespace(
             stGigEInfo=SimpleNamespace(nCurrentIp=int(ipaddress.IPv4Address(cfg['camera_ip'])))))
-        with patch('vision.pipeline.Detector'),patch('vision.pipeline.MvsCamera',return_value=camera),\
+        with patch('vision.pipeline.Detector') as detector,patch('vision.pipeline.MvsCamera',return_value=camera),\
              patch('ctypes.cast',return_value=SimpleNamespace(contents=info)),patch.object(vision,'_work'):
             vision.connect()
+            detector.assert_called_once_with(owned('models/runs/obb_van_v1-2/weights/best.pt'),cfg['vision'])
             camera.connect.assert_called_once_with(0)
             self.assertTrue(vision.connected)
         vision.close()
@@ -90,18 +91,23 @@ class CalibrationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             c.check_frame(np.zeros((10,10,3),dtype=np.uint8))
 
-    def test_detector_bbox_center_uses_calibration_once(self):
+    def test_detector_obb_center_uses_calibration_once(self):
         from unittest.mock import Mock
         d=Detector.__new__(Detector)
         d.config={'imgsz':960,'device':'cpu'}
         box=Mock()
+        box.cpu.return_value=box
         box.xyxy=[Mock()]
-        box.xyxy[0].cpu.return_value.tolist.return_value=[10,20,30,60]
+        box.xyxy[0].tolist.return_value=[10,20,30,60]
+        box.xywhr=[Mock()]
+        box.xywhr[0].tolist.return_value=[21,41,20,40,.4]
+        box.xyxyxyxy=[Mock()]
+        box.xyxyxyxy[0].tolist.return_value=[[10,20],[30,20],[30,60],[10,60]]
         box.conf=[Mock()];box.conf[0].item.return_value=.9
         box.cls=[Mock()];box.cls[0].item.return_value=0
-        result=Mock(orig_shape=(100,100),boxes=[box],names={0:'part'})
+        result=Mock(orig_shape=(100,100),obb=[box],boxes=None,names={0:'part'})
         d.model=Mock();d.model.predict.return_value=[result]
         c=Mock(size=(100,100));c.convert.return_value=(1,2,0)
         items=d.detect(np.zeros((100,100,3),dtype=np.uint8),c,{'confidence':.5,'plane_z_mm':0})
-        self.assertEqual((items[0]['u'],items[0]['v']),(20,40))
-        c.convert.assert_called_once_with(20,40,0)
+        self.assertEqual((items[0]['u'],items[0]['v']),(21,41))
+        c.convert.assert_called_once_with(21,41,0)

@@ -1,0 +1,13 @@
+train: C:\Data\YOLO Train\Detect Van.v1i.yolov8\train\images
+val: C:\Data\YOLO Train\Detect Van.v1i.yolov8\valid\images
+test: C:\Data\YOLO Train\Detect Van.v1i.yolov8\test\images
+nc: 1
+names:
+  0: van
+roboflow:
+  workspace: hos-workspace-dw0dd
+  project: detect-van
+  version: 1
+  license: Private
+  url: https://app.roboflow.com/hos-workspace-dw0dd/detect-van/1
+path: C:\Data\YOLO Train\Detect Van.v1i.yolov8

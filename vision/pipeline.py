@@ -31,6 +31,7 @@ class Vision:
         self.preview = None
         self.frame_id, self.stamp, self.items, self.fps = 0, 0, [], 0
         self.tracker = BoardTracker()
+        self._preview_theta = {}  # Display only, keyed by tracker instance.
         self._next_target = None
         self._prefetch = dict(state='IDLE', cycle_id=None)
 
@@ -79,7 +80,7 @@ class Vision:
             raise RuntimeError('Camera worker vẫn đang dừng')
         self.clear_next_pick()
         if not self.mock:
-            self.detector = Detector(owned('models/best.pt'), self.cfg['vision'])
+            self.detector = Detector(owned('models/runs/obb_van_v1-2/weights/best.pt'), self.cfg['vision'])
             if self.camera:
                 self.camera.close()
             self.camera = MvsCamera(self.cfg['vision']['sdk_root'])
@@ -119,15 +120,35 @@ class Vision:
                         continue
                     items = self.detector.detect(frame, self.calibration, {**settings, 'confidence':self.cfg['vision']['confidence']})
                 items = self.tracker.update(items, stamp)
+                self._preview_theta = {key: value for key, value in self._preview_theta.items()
+                                       if key in {t['instance'] for t in self.tracker.tracks.values()}}
                 last = frame_id
                 scale = min(1, 960/frame.shape[1])
                 image = cv2.resize(frame, (round(frame.shape[1]*scale), round(frame.shape[0]*scale)))
                 for item in items:
                     a,b,c,d = [round(v*scale) for v in item['bbox']]
-                    cv2.rectangle(image,(a,b),(c,d),(80,220,140),2)
+                    if 'corners' in item:
+                        points = np.rint(np.asarray(item['corners'])*scale).astype(np.int32)
+                        cv2.polylines(image,[points],True,(80,220,140),2)
+                    else:
+                        cv2.rectangle(image,(a,b),(c,d),(80,220,140),2)
                     xy = item.get('xyz', (0,0))
-                    cv2.putText(image,f'ID {item["id"]} {item["confidence"]:.2f} X {xy[0]:.1f} Y {xy[1]:.1f}',
-                                (a,max(20,b-10)),cv2.FONT_HERSHEY_SIMPLEX,.5,(80,220,140),1)
+                    label = f'ID {item["id"]} {item["confidence"]:.0%} X {xy[0]:.1f} Y {xy[1]:.1f}'
+                    theta = item.get('theta_deg')
+                    previous = self._preview_theta.get(item['instance'])
+                    if theta is not None:
+                        if previous is not None:
+                            # Nearest 180-degree equivalent, then damp frame jitter.
+                            theta = previous + .3 * ((theta-previous+90) % 180-90)
+                        self._preview_theta[item['instance']] = theta
+                    else:
+                        theta = previous
+                    if theta is not None:
+                        label += f' theta {theta:+.1f} deg RZ {90-theta:.1f} deg'
+                    label_width = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, .5, 1)[0][0]
+                    cv2.putText(image,label,
+                                (max(0,min(a,image.shape[1]-label_width-1)),max(20,b-10)),
+                                cv2.FONT_HERSHEY_SIMPLEX,.5,(80,220,140),1)
                 ok, jpeg = cv2.imencode('.jpg', image)
                 with self.lock:
                     self.fps = 1/max(time.monotonic()-started,.001)

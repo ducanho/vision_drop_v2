@@ -52,7 +52,7 @@ class PreparedPickTests(unittest.TestCase):
         self.assertFalse(any(n in ('MOVL','START') for n,d in self.c.robot.client.commands))
 
     def test_occluded_uncertain_moved_or_new_instance_must_stabilize_again(self):
-        for items in ([],[board(uncertain=True)],[board(x=820)],[board(instance=99)],[board(3,800,3)]):
+        for items in ([],[board(uncertain=True)],[board(x=860)],[board(instance=99)],[board(3,800,3)]):
             with self.subTest(items=items):
                 self.c.journal.update(target=None)
                 frame=100
